@@ -40,6 +40,12 @@ try {
   .theme-spooky button{border-color:#b06a1e}
   .theme-spooky #msg{color:#ff9b1a}
   .theme-spooky footer{color:#8d7a99}
+  .theme-jade h1{color:#ffd76a;text-shadow:0 0 12px rgba(255,215,106,.5)}
+  .theme-jade #scores #level{color:#35d99a}
+  .theme-jade canvas{background:#04120b;border-color:#1d7a4f;box-shadow:0 0 24px rgba(53,217,154,.16)}
+  .theme-jade button{border-color:#2fae72}
+  .theme-jade #msg{color:#ffd76a}
+  .theme-jade footer{color:#7a9987}
   @media (max-width:380px){
     h1{font-size:17px}
     #scores{font-size:12px}
@@ -75,7 +81,7 @@ html,body{-webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;us
 <body>
 <header>
   <h1>GLITCH BREAKOUT</h1>
-  <div id="pilot" style="color:#ff2e88;font-weight:700;letter-spacing:1px;margin:2px 0">OVERDRIVE PILOT · difficulty test build · not the live game</div>
+  <div id="pilot" style="color:#ff2e88;font-weight:700;letter-spacing:1px;margin:2px 0">OVERDRIVE PILOT v2 · difficulty test build · not the live game</div>
   <div id="scores">Score: <span id="score">0</span> &nbsp; Lives: <span id="lives">3</span> &nbsp; Best: <b id="best">0</b> &nbsp; Level: <b id="level">1</b></div>
 </header>
 <div id="wrap">
@@ -149,7 +155,7 @@ html,body{-webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;us
       ball: { color: "#ffffff", glow: "#00f0ff", trail: null },
       particles: ["#00f0ff", "#ff2e88"],
       glitchA: "rgba(0,240,255,0.45)", glitchB: "rgba(255,46,136,0.45)",
-      startLine1: "The grid is corrupted. 40 bricks of static.",
+      startLine1: "The grid is corrupted. 32 bricks of static.",
       startLine2: "Drag or arrow keys. Keep the signal alive.",
       overTitle: "SIGNAL LOST", overTitleColor: "#ff2e88",
       overLine2: "Press Start to jack back in."
@@ -163,10 +169,24 @@ html,body{-webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;us
       ball: { color: "#ff9b1a", glow: "#ff9b1a", trail: "#ff9b1a" },
       particles: ["#ff9b1a", "#c81e3a", "#7a2cf0"],
       glitchA: "rgba(255,155,26,0.45)", glitchB: "rgba(122,44,240,0.45)",
-      startLine1: "The veil is thin tonight. 40 bricks of static.",
+      startLine1: "The veil is thin tonight. 32 bricks of static.",
       startLine2: "Drag or arrow keys. Send them back.",
       overTitle: "CLAIMED", overTitleColor: "#ff9b1a",
       overLine2: "Press Start to rise again."
+    },
+    jade: {
+      name: "Jade Circuit",
+      grid: "rgba(53,217,154,0.05)",
+      moon: false, mist: false, plate: true,
+      bricks: ["#1d7a4f", "#27a568", "#35d99a", "#14532d"],
+      paddle: "#2fae72",
+      ball: { color: "#ffd76a", glow: "#ffca3a", trail: "#c9971c" },
+      particles: ["#35d99a", "#ffd76a", "#27a568"],
+      glitchA: "rgba(53,217,154,0.5)", glitchB: "rgba(255,215,106,0.5)",
+      startLine1: "The circuit is dark. 32 jade tiles wait.",
+      startLine2: "Drag or arrow keys. Light every trace.",
+      overTitle: "CIRCUIT BROKEN", overTitleColor: "#ffd76a",
+      overLine2: "Press Start to light it again."
     }
   };
   var SEASON_DEFAULTS = [
@@ -186,15 +206,15 @@ html,body{-webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;us
     return "classic";
   }
   var themeId = loadStored("gbo-theme", null);
-  if (!themeId || !THEMES[themeId]) themeId = seasonalDefault();
+  if (!themeId || !THEMES[themeId]) themeId = "jade"; /* OVERDRIVE pilot defaults to Jade Circuit; a stored choice still wins. */
   var THEME = THEMES[themeId];
   var themeBtn = document.getElementById("themeBtn");
-  try { document.body.classList.toggle("theme-spooky", themeId === "spooky"); } catch (e) {}
+  try { document.body.classList.toggle("theme-spooky", themeId === "spooky"); document.body.classList.toggle("theme-jade", themeId === "jade"); } catch (e) {}
   themeBtn.textContent = "Theme: " + THEME.name;
   function applyTheme(id){
     themeId = THEMES[id] ? id : "classic";
     THEME = THEMES[themeId];
-    try { document.body.classList.toggle("theme-spooky", themeId === "spooky"); } catch (e) {}
+    try { document.body.classList.toggle("theme-spooky", themeId === "spooky"); document.body.classList.toggle("theme-jade", themeId === "jade"); } catch (e) {}
     themeBtn.textContent = "Theme: " + THEME.name;
     saveStored("gbo-theme", themeId);
     /* Recolor the current wall to the theme palette. Layouts, HP, and
@@ -224,6 +244,11 @@ html,body{-webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;us
   var balls = [], bricks = [], particles = [], glitches = [], powerups = [];
   var keys = {};
   var audioCtx = null;
+  /* Jade Circuit background plate: AI-generated carved-stone asset
+     (build-time asset, no runtime ML). Drawn only for the jade theme. */
+  var plateImg = new Image(), plateReady = false;
+  plateImg.onload = function(){ plateReady = true; if (!running) draw(); };
+  plateImg.src = "jade-plate.webp";
 
   function blip(freq, dur){
     if (!soundOn) return;
@@ -244,10 +269,11 @@ html,body{-webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;us
     if (paddle.x > BOARD_W - paddle.w - 4) paddle.x = BOARD_W - paddle.w - 4;
   }
   function ballSpeed(){
-    /* OVERDRIVE launch curve: level 1 is exactly the live game's
-       2.3 (~138 px/s). Each level adds 0.3 instead of 0.2, and the
-       cap rises from 3.4 to 4.4, reached at level 8. */
-    return Math.min(2.3 + (level - 1) * 0.3, 4.4);
+    /* OVERDRIVE v2 launch curve: George's verdict on v1 was that
+       the first levels were too easy, so level 1 now starts at 2.7
+       (~162 px/s) instead of the live game's 2.3. Each level adds
+       0.3; the cap is 4.8, reached at level 8. */
+    return Math.min(2.7 + (level - 1) * 0.3, 4.8);
   }
   /* OVERDRIVE paddle squeeze: from level 4 the paddle narrows 4px
      per level, floor 60px (live game: always 80). Expand power-up
@@ -313,13 +339,17 @@ html,body{-webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;us
       var row = pattern[r];
       for (var c = 0; c < cols; c++) {
         if (row.charAt(c) !== "X") continue;
+        /* OVERDRIVE v2: 32-brick walls (skip every 5th brick) —
+           shorter levels per George's verdict. Patterns, drop
+           rates, and armor rules apply to the bricks that remain. */
+        if (idx % 5 === 4) { idx++; continue; }
         var hp = 1;
         if (hpThree && idx % 4 === 0) hp = 3;
         else if (hpTwo && idx % 4 === 2) hp = 2;
-        /* OVERDRIVE: extra armor late — L6+ some 1-hit bricks become
-           2-hit, L8+ a few become 3-hit. Patterns/brick counts unchanged. */
-        if (level >= 6 && idx % 7 === 3) hp = Math.max(hp, 2);
-        if (level >= 8 && idx % 9 === 5) hp = 3;
+        /* OVERDRIVE v2: the v1 extra-armor lines (L6+/L8+) were
+           REMOVED — George's verdict was that levels take too long,
+           and hit-count was a length cause, not a difficulty win.
+           Difficulty now comes from speed, rally, and paddle. */
         var drop = null;
         if (Math.random() < 0.2) {
           var pick = Math.random();
@@ -327,7 +357,7 @@ html,body{-webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;us
           if (drop === "S" && bricks.some(function(b){ return b.drop === "S"; })) drop = "E";
         }
         bricks.push({ x: x0 + c * (bw + gap), y: 46 + r * (bh + gap), w: bw, h: bh,
-                      color: colors[r % colors.length], hp: hp, alive: true, drop: drop, row: r });
+                      color: colors[r % colors.length], hp: hp, maxHp: hp, alive: true, drop: drop, row: r });
         idx++;
       }
     }
@@ -417,8 +447,8 @@ html,body{-webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;us
         return; /* Brief pause between levels: balls and paddle hold still. */
       }
     }
-    if (keys.ArrowLeft || keys.a) paddle.x -= 5.5 * dt;
-    if (keys.ArrowRight || keys.d) paddle.x += 5.5 * dt;
+    if (keys.ArrowLeft || keys.a) paddle.x -= 6.2 * dt;
+    if (keys.ArrowRight || keys.d) paddle.x += 6.2 * dt;
     clampPaddle();
     expireExpand();
 
@@ -458,13 +488,13 @@ html,body{-webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;us
           if (br.hp > 1) {
             /* Armored brick: chip it, no drop yet, points for the crack. */
             br.hp -= 1;
-            b.vx *= 1.003; b.vy *= 1.003; /* OVERDRIVE rally pressure (chip) */
+            b.vx *= 1.005; b.vy *= 1.005; /* OVERDRIVE v2 rally pressure (chip) */
             score += 5; updateHud();
             shatter(br); blip(520, 0.06);
             msgEl.textContent = br.hp > 1 ? "Cracked. " + br.hp + " hits to go." : "One more hit.";
           } else {
             br.alive = false;
-            b.vx *= 1.007; b.vy *= 1.007; /* OVERDRIVE rally pressure: every broken brick makes the ball a little faster, up to this level's cap. */
+            b.vx *= 1.012; b.vy *= 1.012; /* OVERDRIVE v2 rally pressure: stronger than v1 — levels should end, not drag. */
             score += 10; updateHud();
             shatter(br); blip(660, 0.07);
             if (br.drop) powerups.push({ x: br.x + br.w / 2, y: br.y + br.h, type: br.drop });
@@ -560,6 +590,7 @@ html,body{-webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;us
 
   function draw(){
     ctx.clearRect(0, 0, BOARD_W, BOARD_H);
+    if (THEME.plate && plateReady) ctx.drawImage(plateImg, 0, 0, BOARD_W, BOARD_H);
     if (THEME.moon) drawMoon();
     ctx.strokeStyle = THEME.grid; ctx.lineWidth = 1;
     for (var gx = 0; gx <= BOARD_W; gx += 40) { ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, BOARD_H); ctx.stroke(); }
@@ -568,6 +599,32 @@ html,body{-webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;us
     bricks.forEach(function(br){
       if (!br.alive) return;
       ctx.fillStyle = br.color; ctx.fillRect(br.x, br.y, br.w, br.h);
+      if (themeId === "jade") {
+        /* Circuit traces, deterministic per brick position: two
+           traces with node dots, etched in lighter jade. */
+        var seed = (br.x * 7 + br.y * 13) % 4;
+        ctx.strokeStyle = "rgba(140,255,200,0.5)"; ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(br.x + 4, br.y + br.h / 2);
+        ctx.lineTo(br.x + br.w * (0.35 + seed * 0.1), br.y + br.h / 2);
+        ctx.lineTo(br.x + br.w * (0.35 + seed * 0.1), br.y + (seed % 2 ? 3 : br.h - 3));
+        ctx.stroke();
+        ctx.fillStyle = "rgba(190,255,220,0.75)";
+        ctx.beginPath(); ctx.arc(br.x + 4, br.y + br.h / 2, 1.6, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(br.x + br.w * (0.35 + seed * 0.1), br.y + (seed % 2 ? 3 : br.h - 3), 1.6, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = "rgba(0,0,0,0.35)";
+        ctx.strokeRect(br.x + 0.5, br.y + 0.5, br.w - 1, br.h - 1);
+        /* Cracks once the tile has taken a hit. */
+        if (br.maxHp && br.hp < br.maxHp) {
+          ctx.strokeStyle = "rgba(2,20,10,0.8)";
+          ctx.beginPath();
+          ctx.moveTo(br.x + br.w * 0.2, br.y + 2);
+          ctx.lineTo(br.x + br.w * 0.45, br.y + br.h * 0.55);
+          ctx.lineTo(br.x + br.w * 0.35, br.y + br.h - 2);
+          if (br.hp < br.maxHp - 1) { ctx.moveTo(br.x + br.w * 0.75, br.y + 3); ctx.lineTo(br.x + br.w * 0.6, br.y + br.h - 3); }
+          ctx.stroke();
+        }
+      }
       /* Armored bricks wear their hits: white ring for 2-hit,
          magenta ring for 3-hit. */
       if (br.hp > 1) {
@@ -631,8 +688,8 @@ html,body{-webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;us
         ctx.fillStyle = "#8fb8c4"; ctx.font = "14px system-ui";
         ctx.fillText(THEME.overLine2, BOARD_W / 2, BOARD_H / 2 + 30);
       } else {
-        ctx.fillStyle = "#00f0ff"; ctx.font = "bold 22px system-ui";
-        ctx.fillText("GLITCH BREAKOUT", BOARD_W / 2, BOARD_H / 2 - 24);
+        ctx.fillStyle = themeId === "jade" ? "#ffd76a" : "#00f0ff"; ctx.font = "bold 22px system-ui";
+        ctx.fillText(themeId === "jade" ? "JADE CIRCUIT" : "GLITCH BREAKOUT", BOARD_W / 2, BOARD_H / 2 - 24);
         ctx.fillStyle = "#e8fbff"; ctx.font = "15px system-ui";
         ctx.fillText(THEME.startLine1, BOARD_W / 2, BOARD_H / 2 + 4);
         ctx.fillStyle = "#8fb8c4"; ctx.font = "14px system-ui";
@@ -687,7 +744,8 @@ html,body{-webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;us
   startBtn.addEventListener("click", start);
   pauseBtn.addEventListener("click", togglePause);
   themeBtn.addEventListener("click", function(){
-    applyTheme(themeId === "spooky" ? "classic" : "spooky");
+    var order = ["classic", "spooky", "jade"];
+    applyTheme(order[(order.indexOf(themeId) + 1) % order.length]);
     blip(520, 0.08);
   });
   soundBtn.addEventListener("click", function(){
