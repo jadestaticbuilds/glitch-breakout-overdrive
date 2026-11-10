@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<script>
+/* ?view=desktop preview: force desktop theme on narrow screens */
+try {
+  if (new URLSearchParams(location.search).get("view") === "desktop") {
+    document.querySelector('meta[name="viewport"]').setAttribute("content", "width=1280");
+  }
+} catch (e) {}
+</script>
+<title>Glitch Breakout · OVERDRIVE pilot</title>
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;padding:0;height:100%;background:#04070d;color:#e8fbff;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;overflow:hidden}
+  body{display:flex;flex-direction:column;align-items:center}
+  header{width:100%;max-width:520px;padding:10px 12px 4px;display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+  h1{margin:0;font-size:20px;letter-spacing:2px;color:#00f0ff;text-shadow:0 0 12px rgba(0,240,255,.55)}
+  #scores{font-size:14px;text-align:right;line-height:1.5}
+  #scores #level{color:#00f0ff}
+  #scores b{color:#ffe259}
+  #wrap{width:min(94vw,460px);flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+  canvas{width:100%;height:auto;aspect-ratio:400/520;background:#050a14;border:1px solid #0f5e7a;border-radius:10px;box-shadow:0 0 24px rgba(0,240,255,.12);touch-action:none;display:block}
+  #bar{display:flex;gap:8px;padding:10px 0 4px}
+  button{flex:1;min-height:48px;border:1px solid #00f0ff;background:#08131f;color:#e8fbff;font-size:17px;font-weight:700;padding:12px 8px;border-radius:10px;cursor:pointer}
+  button:active{background:#0f2a3d}
+  #msg{text-align:center;min-height:20px;font-size:14px;color:#ff2e88}
+  #hint{text-align:center;font-size:12px;color:#8fb8c4;padding:0 8px 4px;line-height:1.4}
+  footer{text-align:center;font-size:11px;color:#6f8d99;padding:4px 8px calc(10px + env(safe-area-inset-bottom));padding-bottom:34px;padding-bottom:max(34px, calc(10px + env(safe-area-inset-bottom)))}
+  @media (prefers-reduced-motion: reduce){canvas{box-shadow:none}}
+  /* Seasonal themes: a body class swaps the page chrome, while the
+     canvas board is drawn per theme in draw(). To add a holiday,
+     add a theme object in the script and a season window in
+     SEASON_DEFAULTS. */
+  .theme-spooky h1{color:#ff9b1a;text-shadow:0 0 12px rgba(255,155,26,.55)}
+  .theme-spooky #scores #level{color:#ff9b1a}
+  .theme-spooky canvas{background:#0d0618;border-color:#7a2cf0;box-shadow:0 0 24px rgba(122,44,240,.18)}
+  .theme-spooky button{border-color:#b06a1e}
+  .theme-spooky #msg{color:#ff9b1a}
+  .theme-spooky footer{color:#8d7a99}
+  @media (max-width:380px){
+    h1{font-size:17px}
+    #scores{font-size:12px}
+    button{font-size:15px;min-height:52px}
+    #hint{font-size:11px}
+  }
+  /* --- Desktop (Tier 5 desktop-readiness): everything in this block only
+     applies at 1024px and up. Phone CSS above is untouched. Arcade pattern:
+     centered, larger board; the 400x520 logical board scales with #wrap. */
+  @media (min-width:1024px){
+    header{max-width:740px;padding:14px 12px 6px}
+    h1{font-size:26px}
+    #scores{font-size:16px}
+    #wrap{width:min(94vw,580px)}
+    #bar{gap:10px}
+    button{font-size:18px}
+    #msg{font-size:16px;min-height:24px}
+    #hint{font-size:14px;max-width:580px}
+    footer{font-size:13px}
+  }
+  @media (min-width:1440px){
+    header{max-width:860px}
+    #wrap{width:min(90vw,660px)}
+    #hint{max-width:660px}
+  }
+</style>
+  <script data-goatcounter="https://georgestriderbuilds.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
+<style>
+/* prevent text selection popup on mobile tap */
+html,body{-webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;user-select:none;-webkit-touch-callout:none;}
+</style>
+</head>
+<body>
+<header>
+  <h1>GLITCH BREAKOUT</h1>
+  <div id="pilot" style="color:#ff2e88;font-weight:700;letter-spacing:1px;margin:2px 0">OVERDRIVE PILOT · difficulty test build · not the live game</div>
+  <div id="scores">Score: <span id="score">0</span> &nbsp; Lives: <span id="lives">3</span> &nbsp; Best: <b id="best">0</b> &nbsp; Level: <b id="level">1</b></div>
+</header>
+<div id="wrap">
+  <canvas id="game" width="400" height="520" aria-label="Glitch Breakout game"></canvas>
+  <div id="bar">
+    <button id="startBtn" type="button">Start</button>
+    <button id="pauseBtn" type="button">Pause</button>
+    <button id="soundBtn" type="button">Sound: On</button>
+    <button id="themeBtn" type="button">Theme: Spooky</button>
+  </div>
+  <div id="msg"></div>
+  <div id="hint">Move: arrow keys, or drag on the board. Smash bricks. Catch falling power-ups: M = multi-ball, E = wider paddle, S = shield (saves one fall).</div>
+  <footer>A Jade Static Builds collab, built with Muse. No signup, no upload.</footer>
+</div>
+<script>
+(function(){
+  "use strict";
+  /* Logical board is always 400 x 520. The canvas backing store is scaled
+     for sharpness on high-density phone screens; gameplay math never
+     depends on screen pixels, so paddle and brick sizes stay consistent. */
+  var BOARD_W = 400, BOARD_H = 520;
+  var BASE_PADDLE_W = 80, WIDE_PADDLE_W = 120, MAX_BALLS = 6;
+  var MAX_BALL_SPEED = 5.5, MIN_VERTICAL_SPEED = 1.2;
+  /* OVERDRIVE: the speed cap itself climbs with the level, so late
+     levels can actually reach the pace the launch curve promises. */
+  function maxBallSpeed(){ return Math.min(MAX_BALL_SPEED + (level - 1) * 0.45, 8.6); }
+  var EXPAND_MS = 12000, LEVEL_CLEAR_MS = 900;
+
+  var canvas = document.getElementById("game");
+  var ctx = canvas.getContext("2d");
+  var scoreEl = document.getElementById("score");
+  var livesEl = document.getElementById("lives");
+  var bestEl = document.getElementById("best");
+  var levelEl = document.getElementById("level");
+  var msgEl = document.getElementById("msg");
+  var startBtn = document.getElementById("startBtn");
+  var pauseBtn = document.getElementById("pauseBtn");
+  var soundBtn = document.getElementById("soundBtn");
+
+  var reducedMotion = false;
+  try { reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) {}
+
+  function loadStored(key, fallback){
+    try {
+      var v = localStorage.getItem(key);
+      return v === null ? fallback : v;
+    } catch (e) { return fallback; }
+  }
+  function saveStored(key, value){
+    try { localStorage.setItem(key, value); } catch (e) {}
+  }
+
+  var best = parseInt(loadStored("gbo-best", "0"), 10) || 0;
+  var soundOn = loadStored("gbo-sound", "on") !== "off";
+  bestEl.textContent = best;
+  soundBtn.textContent = soundOn ? "Sound: On" : "Sound: Off";
+
+  /* Seasonal theme framework: a theme is a full visual reskin, nothing
+     gameplay. To add a holiday, add a theme object to THEMES and a
+     season window to SEASON_DEFAULTS. The stored gb-theme choice wins;
+     otherwise the season picks the default. Gameplay constants, brick
+     layouts, HP rules, drop rates, physics, scoring, sound, and the
+     gb-best / gb-sound keys are untouched by themes. */
+  var THEMES = {
+    classic: {
+      name: "Classic",
+      grid: "rgba(0,240,255,0.07)",
+      moon: false, mist: false,
+      bricks: ["#00f0ff", "#ff2e88", "#ffe259", "#ffffff"],
+      paddle: "#00f0ff",
+      ball: { color: "#ffffff", glow: "#00f0ff", trail: null },
+      particles: ["#00f0ff", "#ff2e88"],
+      glitchA: "rgba(0,240,255,0.45)", glitchB: "rgba(255,46,136,0.45)",
+      startLine1: "The grid is corrupted. 40 bricks of static.",
+      startLine2: "Drag or arrow keys. Keep the signal alive.",
+      overTitle: "SIGNAL LOST", overTitleColor: "#ff2e88",
+      overLine2: "Press Start to jack back in."
+    },
+    spooky: {
+      name: "Spooky",
+      grid: "rgba(150,110,220,0.08)",
+      moon: true, mist: true,
+      bricks: ["#e86a17", "#c81e3a", "#7a2cf0", "#f5a623"],
+      paddle: "#00f0ff",
+      ball: { color: "#ff9b1a", glow: "#ff9b1a", trail: "#ff9b1a" },
+      particles: ["#ff9b1a", "#c81e3a", "#7a2cf0"],
+      glitchA: "rgba(255,155,26,0.45)", glitchB: "rgba(122,44,240,0.45)",
+      startLine1: "The veil is thin tonight. 40 bricks of static.",
+      startLine2: "Drag or arrow keys. Send them back.",
+      overTitle: "CLAIMED", overTitleColor: "#ff9b1a",
+      overLine2: "Press Start to rise again."
+    }
+  };
+  var SEASON_DEFAULTS = [
+    { theme: "spooky", start: [10, 15], end: [11, 2] } /* Halloween season */
+  ];
+  function seasonalDefault(){
+    try {
+      var now = new Date();
+      var m = now.getMonth() + 1, d = now.getDate();
+      for (var i = 0; i < SEASON_DEFAULTS.length; i++) {
+        var s = SEASON_DEFAULTS[i];
+        var afterStart = (m > s.start[0]) || (m === s.start[0] && d >= s.start[1]);
+        var beforeEnd = (m < s.end[0]) || (m === s.end[0] && d <= s.end[1]);
+        if (afterStart && beforeEnd) return s.theme;
+      }
+    } catch (e) {}
+    return "classic";
+  }
+  var themeId = loadStored("gbo-theme", null);
+  if (!themeId || !THEMES[themeId]) themeId = seasonalDefault();
+  var THEME = THEMES[themeId];
+  var themeBtn = document.getElementById("themeBtn");
+  try { document.body.classList.toggle("theme-spooky", themeId === "spooky"); } catch (e) {}
+  themeBtn.textContent = "Theme: " + THEME.name;
+  function applyTheme(id){
+    themeId = THEMES[id] ? id : "classic";
+    THEME = THEMES[themeId];
+    try { document.body.classList.toggle("theme-spooky", themeId === "spooky"); } catch (e) {}
+    themeBtn.textContent = "Theme: " + THEME.name;
+    saveStored("gbo-theme", themeId);
+    /* Recolor the current wall to the theme palette. Layouts, HP, and
+       drops stay exactly as they were; only the paint changes. */
+    bricks.forEach(function(br){
+      br.color = THEME.bricks[(br.row || 0) % THEME.bricks.length];
+    });
+    if (!running) draw();
+  }
+
+  /* Crisp rendering on phone screens without changing game coordinates. */
+  function sharpenCanvas(){
+    var dpr = 1;
+    try { dpr = Math.min(window.devicePixelRatio || 1, 3); } catch (e) {}
+    canvas.width = BOARD_W * dpr;
+    canvas.height = BOARD_H * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  sharpenCanvas();
+  try { window.addEventListener("resize", sharpenCanvas); } catch (e) {}
+
+  var running = false, paused = false, gameOver = false, raf = 0, last = 0;
+  var finalScore = 0;
+  var score = 0, lives = 3, level = 1;
+  var shield = false, expandEndsAt = 0, levelClearEndsAt = 0;
+  var paddle = { x: BOARD_W / 2 - BASE_PADDLE_W / 2, y: BOARD_H - 28, w: BASE_PADDLE_W, h: 12 };
+  var balls = [], bricks = [], particles = [], glitches = [], powerups = [];
+  var keys = {};
+  var audioCtx = null;
+
+  function blip(freq, dur){
+    if (!soundOn) return;
+    try {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === "suspended") audioCtx.resume();
+      var osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+      osc.type = "square"; osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.04, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+      osc.connect(gain); gain.connect(audioCtx.destination);
+      osc.start(); osc.stop(audioCtx.currentTime + dur);
+    } catch (e) {}
+  }
+
+  function clampPaddle(){
+    if (paddle.x < 4) paddle.x = 4;
+    if (paddle.x > BOARD_W - paddle.w - 4) paddle.x = BOARD_W - paddle.w - 4;
+  }
+  function ballSpeed(){
+    /* OVERDRIVE launch curve: level 1 is exactly the live game's
+       2.3 (~138 px/s). Each level adds 0.3 instead of 0.2, and the
+       cap rises from 3.4 to 4.4, reached at level 8. */
+    return Math.min(2.3 + (level - 1) * 0.3, 4.4);
+  }
+  /* OVERDRIVE paddle squeeze: from level 4 the paddle narrows 4px
+     per level, floor 60px (live game: always 80). Expand power-up
+     still widens to 120 and restores to this level's width. */
+  function basePaddleW(){
+    return Math.max(BASE_PADDLE_W - Math.max(0, level - 3) * 4, 60);
+  }
+  function resetBall(){
+    var s = ballSpeed();
+    balls = [{ x: BOARD_W / 2, y: BOARD_H - 48, vx: s * 0.6, vy: -s, r: 7 }];
+  }
+  /* Varied walls per level. Every pattern below holds exactly 40
+     bricks on the 8-column grid. From level 2 some bricks take
+     2 hits, from level 4 some take 3. Power-up drop rates are
+     unchanged: about 1 in 5 bricks drops one, at most one
+     shield brick per level, so a shield in hand never stacks. */
+  var WALL_PATTERNS = [
+    ["XXXXXXXX",
+     "XXXXXXXX",
+     "XXXXXXXX",
+     "XXXXXXXX",
+     "XXXXXXXX"],
+    ["XXXXXXXX",
+     "X.XXXX.X",
+     "XXXXXXXX",
+     "XX.XX.XX",
+     "XXXXXXXX",
+     ".X.XX.X."],
+    ["XXXXXXXX",
+     "XX.XX.XX",
+     "X.XXXX.X",
+     "XXXXXXXX",
+     ".XX..XX.",
+     "X.XXXX.X",
+     "..X..X.."],
+    ["...XX...",
+     "..XXXX..",
+     ".XXXXXX.",
+     "XXXXXXXX",
+     "XXXXXXXX",
+     ".XXXXXX.",
+     "..XXXX..",
+     "...XX..."],
+    ["X.X.X.X.",
+     "X.X.X.X.",
+     "XXXXXXXX",
+     "X.X.X.X.",
+     "X.X.X.X.",
+     "XXXXXXXX",
+     "X.X.X.X.",
+     "X.X.X.X."]
+  ];
+  function buildBricks(level){
+    bricks = [];
+    var pattern = WALL_PATTERNS[(level - 1) % WALL_PATTERNS.length];
+    var cols = 8, gap = 4;
+    var bw = Math.floor((BOARD_W - 16 - (cols - 1) * gap) / cols);
+    var bh = 18, x0 = (BOARD_W - (cols * bw + (cols - 1) * gap)) / 2;
+    var colors = THEME.bricks;
+    var hpTwo = level >= 2, hpThree = level >= 4;
+    var idx = 0;
+    for (var r = 0; r < pattern.length; r++) {
+      var row = pattern[r];
+      for (var c = 0; c < cols; c++) {
+        if (row.charAt(c) !== "X") continue;
+        var hp = 1;
+        if (hpThree && idx % 4 === 0) hp = 3;
+        else if (hpTwo && idx % 4 === 2) hp = 2;
+        /* OVERDRIVE: extra armor late — L6+ some 1-hit bricks become
+           2-hit, L8+ a few become 3-hit. Patterns/brick counts unchanged. */
+        if (level >= 6 && idx % 7 === 3) hp = Math.max(hp, 2);
+        if (level >= 8 && idx % 9 === 5) hp = 3;
+        var drop = null;
+        if (Math.random() < 0.2) {
+          var pick = Math.random();
+          drop = pick < 0.4 ? "M" : (pick < 0.75 ? "E" : "S");
+          if (drop === "S" && bricks.some(function(b){ return b.drop === "S"; })) drop = "E";
+        }
+        bricks.push({ x: x0 + c * (bw + gap), y: 46 + r * (bh + gap), w: bw, h: bh,
+                      color: colors[r % colors.length], hp: hp, alive: true, drop: drop, row: r });
+        idx++;
+      }
+    }
+  }
+  function resetGame(){
+    score = 0; lives = 3; level = 1; shield = false;
+    gameOver = false; finalScore = 0;
+    expandEndsAt = 0; levelClearEndsAt = 0;
+    paddle.w = basePaddleW(); paddle.x = BOARD_W / 2 - basePaddleW() / 2;
+    particles = []; glitches = []; powerups = [];
+    buildBricks(level); resetBall(); updateHud();
+    levelEl.textContent = level;
+  }
+  function updateHud(){
+    scoreEl.textContent = score;
+    livesEl.textContent = lives;
+    if (score > best) { best = score; bestEl.textContent = best; saveStored("gbo-best", String(best)); }
+  }
+  function shatter(brick){
+    var n = reducedMotion ? 6 : 14;
+    for (var i = 0; i < n; i++) {
+      if (particles.length >= 200) break;
+      particles.push({
+        x: brick.x + brick.w / 2, y: brick.y + brick.h / 2,
+        vx: (Math.random() - 0.5) * 5, vy: (Math.random() - 0.5) * 5,
+        life: reducedMotion ? 14 : 26,
+        color: THEME.particles[(Math.random() * THEME.particles.length) | 0],
+        size: 2 + Math.random() * 3
+      });
+    }
+    if (!reducedMotion && glitches.length < 20) {
+      glitches.push({ x: brick.x, y: brick.y, w: brick.w, h: brick.h, life: 12 });
+    }
+  }
+  /* Keep a ball playable: never flat-horizontal, never runaway fast. */
+  function fixBall(b){
+    var speed = Math.sqrt(b.vx * b.vx + b.vy * b.vy) || ballSpeed();
+    var cap = maxBallSpeed();
+    if (speed > cap) { b.vx *= cap / speed; b.vy *= cap / speed; }
+    if (Math.abs(b.vy) < MIN_VERTICAL_SPEED) {
+      b.vy = b.vy >= 0 ? MIN_VERTICAL_SPEED : -MIN_VERTICAL_SPEED;
+    }
+  }
+  function applyPower(type){
+    if (type === "M") {
+      /* Duplicate each ball once, capped, and never with a zero sideways
+         speed (that is how a ball gets stuck bouncing straight up). */
+      if (balls.length >= MAX_BALLS) {
+        score += 25; updateHud(); msgEl.textContent = "Already at max balls: +25 points instead.";
+      } else {
+        var extra = [];
+        balls.forEach(function(b){
+          if (balls.length + extra.length >= MAX_BALLS) return;
+          var vx = -b.vx;
+          if (Math.abs(vx) < 1) vx = vx >= 0 ? 2 : -2;
+          extra.push({ x: b.x, y: b.y, vx: vx, vy: b.vy, r: b.r });
+        });
+        balls = balls.concat(extra);
+        msgEl.textContent = "Multi-ball!";
+      }
+    } else if (type === "E") {
+      /* Refreshing the timer, not stacking the width, is the clean reset. */
+      paddle.w = WIDE_PADDLE_W; expandEndsAt = Date.now() + EXPAND_MS; clampPaddle();
+      msgEl.textContent = "Wider paddle, 12 seconds!";
+    } else if (type === "S") {
+      if (shield) {
+        score += 25; updateHud(); msgEl.textContent = "Shield already ready: +25 points instead.";
+      } else {
+        shield = true;
+        msgEl.textContent = "Shield ready: it will save one fall!";
+      }
+    }
+    blip(880, 0.12);
+  }
+  function expireExpand(){
+    if (expandEndsAt && Date.now() > expandEndsAt) {
+      paddle.w = basePaddleW(); expandEndsAt = 0; clampPaddle();
+    }
+  }
+
+  function step(dt){
+    if (dt === undefined) dt = 1;
+    if (levelClearEndsAt) {
+      if (Date.now() >= levelClearEndsAt) {
+        levelClearEndsAt = 0; buildBricks(level); resetBall();
+      } else {
+        return; /* Brief pause between levels: balls and paddle hold still. */
+      }
+    }
+    if (keys.ArrowLeft || keys.a) paddle.x -= 5.5 * dt;
+    if (keys.ArrowRight || keys.d) paddle.x += 5.5 * dt;
+    clampPaddle();
+    expireExpand();
+
+    for (var i = powerups.length - 1; i >= 0; i--) {
+      var p = powerups[i]; p.y += 2.2 * dt;
+      if (p.y + 10 >= paddle.y && p.x >= paddle.x - 6 && p.x <= paddle.x + paddle.w + 6 && p.y < paddle.y + 20) {
+        applyPower(p.type); powerups.splice(i, 1);
+      } else if (p.y > BOARD_H) { powerups.splice(i, 1); }
+    }
+
+    for (var bi = balls.length - 1; bi >= 0; bi--) {
+      var b = balls[bi];
+      b.x += b.vx * dt; b.y += b.vy * dt;
+      /* Prune any ball that somehow escaped the board, instead of
+         letting it orbit forever off-screen. */
+      if (b.x < -60 || b.x > BOARD_W + 60 || b.y < -60) { balls.splice(bi, 1); continue; }
+      if (b.x - b.r < 2) { b.x = 2 + b.r; b.vx = Math.abs(b.vx); blip(220, 0.05); }
+      if (b.x + b.r > BOARD_W - 2) { b.x = BOARD_W - 2 - b.r; b.vx = -Math.abs(b.vx); blip(220, 0.05); }
+      if (b.y - b.r < 2) { b.y = 2 + b.r; b.vy = Math.abs(b.vy); blip(220, 0.05); }
+      fixBall(b);
+
+      if (b.vy > 0 && b.y + b.r >= paddle.y && b.y + b.r <= paddle.y + paddle.h + 8 &&
+          b.x >= paddle.x - 4 && b.x <= paddle.x + paddle.w + 4) {
+        var rel = (b.x - (paddle.x + paddle.w / 2)) / (paddle.w / 2);
+        var speed = Math.sqrt(b.vx * b.vx + b.vy * b.vy) || 4;
+        b.vx = rel * speed * 0.75;
+        b.vy = -Math.sqrt(Math.max(speed * speed - b.vx * b.vx, 4));
+        b.y = paddle.y - b.r; /* Land above the paddle: never stick inside it. */
+        fixBall(b);
+        blip(440, 0.06);
+      }
+
+      for (var j = 0; j < bricks.length; j++) {
+        var br = bricks[j];
+        if (!br.alive) continue;
+        if (b.x + b.r >= br.x && b.x - b.r <= br.x + br.w && b.y + b.r >= br.y && b.y - b.r <= br.y + br.h) {
+          if (br.hp > 1) {
+            /* Armored brick: chip it, no drop yet, points for the crack. */
+            br.hp -= 1;
+            b.vx *= 1.003; b.vy *= 1.003; /* OVERDRIVE rally pressure (chip) */
+            score += 5; updateHud();
+            shatter(br); blip(520, 0.06);
+            msgEl.textContent = br.hp > 1 ? "Cracked. " + br.hp + " hits to go." : "One more hit.";
+          } else {
+            br.alive = false;
+            b.vx *= 1.007; b.vy *= 1.007; /* OVERDRIVE rally pressure: every broken brick makes the ball a little faster, up to this level's cap. */
+            score += 10; updateHud();
+            shatter(br); blip(660, 0.07);
+            if (br.drop) powerups.push({ x: br.x + br.w / 2, y: br.y + br.h, type: br.drop });
+          }
+          /* Bounce off the side hit, not always vertically, so a ball
+             cannot tunnel sideways through a row. */
+          var overlapLeft = (b.x + b.r) - br.x, overlapRight = (br.x + br.w) - (b.x - b.r);
+          var overlapTop = (b.y + b.r) - br.y, overlapBottom = (br.y + br.h) - (b.y - b.r);
+          var minOverlap = Math.min(overlapLeft, overlapRight, overlapTop, overlapBottom);
+          if (minOverlap === overlapLeft || minOverlap === overlapRight) b.vx = -b.vx;
+          else b.vy = -b.vy;
+          fixBall(b);
+          break;
+        }
+      }
+
+      if (b.y - b.r > BOARD_H) {
+        balls.splice(bi, 1);
+        if (balls.length === 0) {
+          if (shield) {
+            /* Consumed exactly once, here, only when the last ball falls. */
+            shield = false;
+            msgEl.textContent = "Shield saved you!";
+            resetBall(); blip(520, 0.1);
+          } else {
+            lives--; updateHud();
+            if (lives <= 0) {
+              running = false; cancelAnimationFrame(raf);
+              gameOver = true; finalScore = score;
+              msgEl.textContent = "Signal lost. Press Start to jack back in.";
+              startBtn.textContent = "Start";
+              jsbFunRate('glitch-breakout-overdrive', msgEl);
+              draw();
+            } else {
+              msgEl.textContent = "Ball lost. " + lives + (lives === 1 ? " life" : " lives") + " left.";
+              resetBall();
+            }
+          }
+        }
+      }
+    }
+
+    /* Level clear only while a run is still alive. A game-over on the same
+       tick as the last brick must not resurrect the run into a new level. */
+    if (running && balls.length > 0 && lives > 0 &&
+        bricks.every(function(br){ return !br.alive; })) {
+      level++; score += 50; updateHud();
+      if (!expandEndsAt) { paddle.w = basePaddleW(); clampPaddle(); } /* OVERDRIVE squeeze applies on level-up */
+      levelEl.textContent = level;
+      msgEl.textContent = "Level " + level + "! New wall, faster, meaner.";
+      levelClearEndsAt = Date.now() + LEVEL_CLEAR_MS;
+      balls = []; /* Cleared balls are replaced when the pause ends. */
+    }
+
+    for (var k = particles.length - 1; k >= 0; k--) {
+      var pt = particles[k];
+      pt.x += pt.vx * dt; pt.y += pt.vy * dt; pt.vy += 0.08 * dt; pt.life -= dt;
+      if (pt.life <= 0) particles.splice(k, 1);
+    }
+    for (var g = glitches.length - 1; g >= 0; g--) {
+      glitches[g].life -= dt;
+      if (glitches[g].life <= 0) glitches.splice(g, 1);
+    }
+  }
+
+  /* Seasonal backdrop dressing. Pure decoration: no gameplay reads it. */
+  function drawMoon(){
+    var mx = 348, my = 40, mr = 22;
+    var g = ctx.createRadialGradient(mx, my, mr * 0.2, mx, my, mr * 2.4);
+    g.addColorStop(0, "rgba(255,217,160,0.85)");
+    g.addColorStop(0.4, "rgba(255,180,100,0.28)");
+    g.addColorStop(1, "rgba(255,180,100,0)");
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(mx, my, mr * 2.4, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#ffd9a0";
+    ctx.beginPath(); ctx.arc(mx, my, mr, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "rgba(198,138,80,0.55)";
+    ctx.beginPath(); ctx.arc(mx - 7, my - 4, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(mx + 6, my + 7, 3.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(mx + 8, my - 8, 2.5, 0, Math.PI * 2); ctx.fill();
+  }
+  function drawMist(){
+    var t = 0;
+    if (!reducedMotion) { try { t = performance.now() / 1000; } catch (e) {} }
+    ctx.fillStyle = "rgba(150,120,200,0.08)";
+    for (var i = 0; i < 4; i++) {
+      var x = reducedMotion ? (60 + i * 110) : (((t * 9 + i * 170) % (BOARD_W + 260)) - 130);
+      ctx.beginPath();
+      ctx.ellipse(x, 130 + i * 100, 130, 22, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function draw(){
+    ctx.clearRect(0, 0, BOARD_W, BOARD_H);
+    if (THEME.moon) drawMoon();
+    ctx.strokeStyle = THEME.grid; ctx.lineWidth = 1;
+    for (var gx = 0; gx <= BOARD_W; gx += 40) { ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, BOARD_H); ctx.stroke(); }
+    for (var gy = 0; gy <= BOARD_H; gy += 40) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(BOARD_W, gy); ctx.stroke(); }
+    if (THEME.mist) drawMist();
+    bricks.forEach(function(br){
+      if (!br.alive) return;
+      ctx.fillStyle = br.color; ctx.fillRect(br.x, br.y, br.w, br.h);
+      /* Armored bricks wear their hits: white ring for 2-hit,
+         magenta ring for 3-hit. */
+      if (br.hp > 1) {
+        ctx.strokeStyle = br.hp > 2 ? "#ff2e88" : "#ffffff";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(br.x + 3, br.y + 3, br.w - 6, br.h - 6);
+      }
+      if (br.drop) { ctx.fillStyle = "#04070d"; ctx.font = "bold 10px system-ui"; ctx.textAlign = "center"; ctx.fillText(br.drop, br.x + br.w / 2, br.y + 13); }
+    });
+    glitches.forEach(function(gl){
+      ctx.fillStyle = THEME.glitchA; ctx.fillRect(gl.x - 3, gl.y, gl.w, 4);
+      ctx.fillStyle = THEME.glitchB; ctx.fillRect(gl.x + 3, gl.y + gl.h - 4, gl.w, 4);
+    });
+    particles.forEach(function(pt){
+      ctx.fillStyle = pt.color; ctx.fillRect(pt.x, pt.y, pt.size, pt.size);
+    });
+    powerups.forEach(function(p){
+      ctx.fillStyle = p.type === "S" ? "#ffe259" : (p.type === "E" ? "#00f0ff" : "#ff2e88");
+      ctx.fillRect(p.x - 10, p.y - 10, 20, 20);
+      ctx.fillStyle = "#04070d"; ctx.font = "bold 13px system-ui"; ctx.textAlign = "center";
+      ctx.fillText(p.type, p.x, p.y + 5);
+    });
+    if (shield) {
+      ctx.strokeStyle = "#ffe259"; ctx.setLineDash([6, 4]);
+      ctx.beginPath(); ctx.moveTo(0, BOARD_H - 6); ctx.lineTo(BOARD_W, BOARD_H - 6); ctx.stroke(); ctx.setLineDash([]);
+    }
+    ctx.fillStyle = THEME.paddle;
+    ctx.shadowColor = reducedMotion ? "transparent" : THEME.paddle;
+    ctx.shadowBlur = reducedMotion ? 0 : 12;
+    ctx.fillRect(paddle.x, paddle.y, paddle.w, paddle.h);
+    ctx.shadowBlur = 0;
+    balls.forEach(function(b){
+      /* Ember trail is drawn from the ball's recent positions. It never
+         touches movement math, which lives in step(). */
+      if (THEME.ball.trail && !reducedMotion) {
+        b._trail = b._trail || [];
+        b._trail.push({ x: b.x, y: b.y });
+        if (b._trail.length > 7) b._trail.shift();
+        for (var i = 0; i < b._trail.length; i++) {
+          var a = (i + 1) / b._trail.length;
+          ctx.globalAlpha = a * 0.35;
+          ctx.fillStyle = THEME.ball.trail;
+          ctx.beginPath(); ctx.arc(b._trail[i].x, b._trail[i].y, b.r * a * 0.7, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+      }
+      ctx.fillStyle = THEME.ball.color;
+      ctx.shadowColor = reducedMotion ? "transparent" : THEME.ball.glow;
+      ctx.shadowBlur = reducedMotion ? 0 : 10;
+      ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2); ctx.fill();
+      ctx.shadowBlur = 0;
+    });
+    if (!running) {
+      ctx.fillStyle = "rgba(4,7,13,0.55)"; ctx.fillRect(0, 0, BOARD_W, BOARD_H);
+      ctx.textAlign = "center";
+      if (gameOver) {
+        ctx.fillStyle = THEME.overTitleColor; ctx.font = "bold 26px system-ui";
+        ctx.fillText(THEME.overTitle, BOARD_W / 2, BOARD_H / 2 - 24);
+        ctx.fillStyle = "#e8fbff"; ctx.font = "15px system-ui";
+        ctx.fillText("Score " + finalScore + ". Best " + best + ".", BOARD_W / 2, BOARD_H / 2 + 4);
+        ctx.fillStyle = "#8fb8c4"; ctx.font = "14px system-ui";
+        ctx.fillText(THEME.overLine2, BOARD_W / 2, BOARD_H / 2 + 30);
+      } else {
+        ctx.fillStyle = "#00f0ff"; ctx.font = "bold 22px system-ui";
+        ctx.fillText("GLITCH BREAKOUT", BOARD_W / 2, BOARD_H / 2 - 24);
+        ctx.fillStyle = "#e8fbff"; ctx.font = "15px system-ui";
+        ctx.fillText(THEME.startLine1, BOARD_W / 2, BOARD_H / 2 + 4);
+        ctx.fillStyle = "#8fb8c4"; ctx.font = "14px system-ui";
+        ctx.fillText(THEME.startLine2, BOARD_W / 2, BOARD_H / 2 + 30);
+      }
+    } else if (paused) {
+      ctx.fillStyle = "rgba(4,7,13,0.6)"; ctx.fillRect(0, 0, BOARD_W, BOARD_H);
+      ctx.fillStyle = "#ffe259"; ctx.font = "bold 24px system-ui"; ctx.textAlign = "center";
+      ctx.fillText("PAUSED", BOARD_W / 2, BOARD_H / 2 - 8);
+      ctx.fillStyle = "#8fb8c4"; ctx.font = "14px system-ui";
+      ctx.fillText("Tap Resume, the board, or press space.", BOARD_W / 2, BOARD_H / 2 + 20);
+    }
+  }
+
+  /* Delta-time movement: the first loop ran one step per screen refresh,
+     so on a 120Hz phone the ball moved twice as fast as on a 60Hz
+     screen. The fixed 60Hz step after that was consistent but steppy
+     on 120Hz screens. Now every movement is scaled by real elapsed
+     time, so the ball moves smoothly at the same speed on 60Hz and
+     120Hz screens, with the frame gap clamped so a tab switch or
+     hiccup cannot teleport the ball. */
+  var STEP_MS = 1000 / 60;
+  function loop(ts){
+    if (!running || paused) return;
+    if (!last) last = ts;
+    var frameMs = ts - last;
+    last = ts;
+    if (frameMs > 100) frameMs = 100;
+    if (frameMs < 0) frameMs = 0;
+    var dt = frameMs / STEP_MS;
+    if (dt > 2) dt = 2;
+    step(dt);
+    draw();
+    raf = requestAnimationFrame(loop);
+  }
+  function start(){
+    if (!running) { resetGame(); running = true; paused = false; msgEl.textContent = ""; }
+    else if (paused) { paused = false; }
+    else { resetGame(); }
+    startBtn.textContent = "Restart";
+    pauseBtn.textContent = "Pause";
+    last = 0; cancelAnimationFrame(raf); raf = requestAnimationFrame(loop);
+    blip(520, 0.08);
+  }
+  function togglePause(){
+    if (!running) return;
+    paused = !paused;
+    pauseBtn.textContent = paused ? "Resume" : "Pause";
+    if (paused) { draw(); }
+    else { last = 0; raf = requestAnimationFrame(loop); }
+  }
+  startBtn.addEventListener("click", start);
+  pauseBtn.addEventListener("click", togglePause);
+  themeBtn.addEventListener("click", function(){
+    applyTheme(themeId === "spooky" ? "classic" : "spooky");
+    blip(520, 0.08);
+  });
+  soundBtn.addEventListener("click", function(){
+    soundOn = !soundOn;
+    soundBtn.textContent = soundOn ? "Sound: On" : "Sound: Off";
+    saveStored("gbo-sound", soundOn ? "on" : "off");
+  });
+  document.addEventListener("keydown", function(e){
+    if (e.key === "ArrowLeft" || e.key === "ArrowRight") e.preventDefault();
+    keys[e.key] = true;
+    if (e.key === " ") { e.preventDefault(); if (running) togglePause(); else start(); }
+  });
+  document.addEventListener("keyup", function(e){ keys[e.key] = false; });
+
+  /* Switching tabs pauses the run instead of ending it. The frame
+     gap clamp already covers short hiccups; this covers real
+     switches away from the game. */
+  document.addEventListener("visibilitychange", function(){
+    if (document.hidden && running && !paused) togglePause();
+  });
+
+  function movePaddleFromEvent(e){
+    var rect = canvas.getBoundingClientRect();
+    var x = (e.clientX - rect.left) / rect.width * BOARD_W;
+    paddle.x = x - paddle.w / 2;
+    clampPaddle();
+  }
+  canvas.addEventListener("pointerdown", function(e){
+    e.preventDefault();
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
+    if (paused) { togglePause(); return; }
+    movePaddleFromEvent(e);
+    if (!running) start();
+  });
+  canvas.addEventListener("pointermove", function(e){ if (e.buttons) movePaddleFromEvent(e); });
+  document.addEventListener("touchmove", function(e){
+    if (e.target === canvas) e.preventDefault();
+  }, { passive: false });
+
+  resetGame(); running = false; draw();
+})();
+</script>
+
+<script>
+/* fun-rating: 3 stars on game over, 3rd+ game over, once per session */
+function jsbFunRate(slug, mountEl){
+  if(!mountEl || mountEl.querySelector('.jsb-funrate')) return;
+  var K = 'jsb-fun-' + slug;
+  function ls(k, v){ try{ if(arguments.length===1) return localStorage.getItem(k); localStorage.setItem(k, v); }catch(e){ return null; } }
+  function ss(k, v){ try{ if(arguments.length===1) return sessionStorage.getItem(k); sessionStorage.setItem(k, v); }catch(e){ return null; } }
+  var n = parseInt(ls(K+'-n')||'0', 10) + 1;
+  ls(K+'-n', String(n));
+  if(n < 3 || ss(K+'-s')) return;
+  ss(K+'-s', '1');
+  var box = document.createElement('div');
+  box.className = 'jsb-funrate';
+  box.innerHTML = '<div class="jsb-fr-q">fun?</div><div class="jsb-fr-stars">' +
+    '<button type="button" data-s="1" aria-label="not fun">\u2605</button>' +
+    '<button type="button" data-s="2" aria-label="ok">\u2605</button>' +
+    '<button type="button" data-s="3" aria-label="love it">\u2605</button></div>';
+  if(!document.getElementById('jsb-fr-css')){
+    var css = document.createElement('style'); css.id = 'jsb-fr-css';
+    css.textContent = '.jsb-funrate{margin:14px auto 4px;text-align:center;}' +
+      '.jsb-fr-q{font-size:12px;letter-spacing:.18em;opacity:.55;margin-bottom:6px;text-transform:uppercase;}' +
+      '.jsb-fr-stars{display:flex;gap:10px;justify-content:center;}' +
+      '.jsb-fr-stars button{background:none;border:none;font-size:34px;line-height:1;' +
+      'color:rgba(255,255,255,.22);cursor:pointer;min-width:52px;min-height:52px;padding:4px;}' +
+      '.jsb-fr-stars button:active{transform:scale(1.25);color:#2ee6a8;}' +
+      '.jsb-fr-thanks{font-size:13px;letter-spacing:.1em;opacity:.7;}';
+    document.head.appendChild(css);
+  }
+  mountEl.appendChild(box);
+  box.addEventListener('click', function(e){
+    var b = e.target.closest ? e.target.closest('button[data-s]') : null;
+    if(!b) return;
+    try{ if(window.goatcounter && window.goatcounter.count){
+      window.goatcounter.count({ path: '/event/fun/' + slug + '/' + b.getAttribute('data-s'), event: true });
+    }}catch(e2){}
+    box.innerHTML = '<div class="jsb-fr-thanks">thanks</div>';
+    setTimeout(function(){ if(box.parentNode) box.parentNode.removeChild(box); }, 1400);
+  });
+}
+</script>
+</body>
+</html>
